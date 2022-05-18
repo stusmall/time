@@ -495,10 +495,93 @@ impl sealed::Sealed for Rfc3339 {
 impl<const CONFIG: EncodedConfig> sealed::Sealed for Iso8601<CONFIG> {
     fn parse_into<'a>(
         &self,
-        input: &'a [u8],
+        mut input: &'a [u8],
         parsed: &mut Parsed,
     ) -> Result<&'a [u8], error::Parse> {
-        todo!()
+        use crate::error::ParseFromDescription::InvalidComponent;
+        use crate::parsing::combinator::rfc::iso8601;
+        use crate::parsing::combinator::rfc::iso8601::ExtendedKind;
+
+        let mut extended_kind = ExtendedKind::Unknown;
+        let mut date_is_present = false;
+        let mut time_is_present = false;
+        let mut offset_is_present = false;
+
+        if let Some(ParsedItem(new_input, (new_extended_kind, year, month, day))) =
+            iso8601::date(extended_kind)(input)
+        {
+            parsed.set_year(year).ok_or(InvalidComponent("year"))?;
+            parsed.set_month(month).ok_or(InvalidComponent("month"))?;
+            parsed.set_day(day).ok_or(InvalidComponent("day"))?;
+            date_is_present = true;
+            extended_kind = new_extended_kind;
+            input = new_input;
+        } else if let Some(ParsedItem(new_input, (new_extended_kind, year, ordinal))) =
+            iso8601::odate(extended_kind)(input)
+        {
+            parsed.set_year(year).ok_or(InvalidComponent("year"))?;
+            parsed
+                .set_ordinal(ordinal)
+                .ok_or(InvalidComponent("ordinal"))?;
+            date_is_present = true;
+            extended_kind = new_extended_kind;
+            input = new_input;
+        } else if let Some(ParsedItem(new_input, (new_extended_kind, year, week, weekday))) =
+            iso8601::wdate(extended_kind)(input)
+        {
+            parsed.set_iso_year(year).ok_or(InvalidComponent("year"))?;
+            parsed
+                .set_iso_week_number(week)
+                .ok_or(InvalidComponent("week"))?;
+            parsed
+                .set_weekday(weekday)
+                .ok_or(InvalidComponent("weekday"))?;
+            date_is_present = true;
+            extended_kind = new_extended_kind;
+            input = new_input;
+        }
+
+        if let Some(ParsedItem(new_input, (new_extended_kind, hour, minute, second, nanosecond))) =
+            iso8601::time(extended_kind, date_is_present)(input)
+        {
+            parsed.set_hour_24(hour).ok_or(InvalidComponent("hour"))?;
+            parsed
+                .set_minute(minute)
+                .ok_or(InvalidComponent("minute"))?;
+            parsed
+                .set_second(second)
+                .ok_or(InvalidComponent("second"))?;
+            parsed
+                .set_subsecond(nanosecond)
+                .ok_or(InvalidComponent("nanosecond"))?;
+            time_is_present = true;
+            extended_kind = new_extended_kind;
+            input = new_input;
+        }
+
+        // If a date and offset are present, a time must be as well.
+        if !date_is_present || time_is_present {
+            if let Some(ParsedItem(new_input, (_extended_kind, offset_hour, offset_minute))) =
+                iso8601::shift(extended_kind)(input)
+            {
+                parsed
+                    .set_offset_hour(offset_hour)
+                    .ok_or(InvalidComponent("offset hour"))?;
+                parsed
+                    .set_offset_minute_signed(offset_minute as _)
+                    .ok_or(InvalidComponent("offset minute"))?;
+                offset_is_present = true;
+                input = new_input;
+            }
+        }
+
+        if !date_is_present && !time_is_present && !offset_is_present {
+            return Err(error::Parse::TryFromParsed(
+                TryFromParsed::InsufficientInformation,
+            ));
+        }
+
+        Ok(input)
     }
 }
 // endregion well-known formats
