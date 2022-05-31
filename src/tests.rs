@@ -17,6 +17,7 @@ use crate::formatting::DigitCount;
 use crate::parsing::shim::Integer;
 use crate::{duration, parsing};
 
+#[wasm_bindgen_test::wasm_bindgen_test]
 #[test]
 fn digit_count() {
     assert_eq!(1_u8.num_digits(), 1);
